@@ -1,0 +1,28 @@
+diff --git a/src/ESPAsyncWebServer.h b/src/ESPAsyncWebServer.h
+index 7cd21aa8..ae7116bf 100644
+--- a/src/ESPAsyncWebServer.h
++++ b/src/ESPAsyncWebServer.h
+@@ -373,6 +373,7 @@ class AsyncWebServerResponse {
+   public:
+     AsyncWebServerResponse();
+     virtual ~AsyncWebServerResponse();
++    virtual int code() const;
+     virtual void setCode(int code);
+     virtual void setContentLength(size_t len);
+     virtual void setContentType(const String& type);
+diff --git a/src/WebResponses.cpp b/src/WebResponses.cpp
+index a22e991a..e26702e9 100644
+--- a/src/WebResponses.cpp
++++ b/src/WebResponses.cpp
+@@ -104,6 +104,10 @@ AsyncWebServerResponse::~AsyncWebServerResponse(){
+   _headers.free();
+ }
+ 
++int AsyncWebServerResponse::code() const {
++  return _code;
++}
++
+ void AsyncWebServerResponse::setCode(int code){
+   if(_state == RESPONSE_SETUP)
+     _code = code;
+     

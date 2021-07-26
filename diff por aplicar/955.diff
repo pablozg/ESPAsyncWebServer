@@ -1,0 +1,205 @@
+diff --git a/README.md b/README.md
+index d6dd3206..93856cd1 100644
+--- a/README.md
++++ b/README.md
+@@ -55,6 +55,7 @@ To use this library you might need to have the latest git versions of [ESP32](ht
+     - [Respond with content using a callback and extra headers](#respond-with-content-using-a-callback-and-extra-headers)
+     - [Respond with content using a callback containing templates](#respond-with-content-using-a-callback-containing-templates)
+     - [Respond with content using a callback containing templates and extra headers](#respond-with-content-using-a-callback-containing-templates-and-extra-headers)
++    - [Respond with content using a stateful callback containing templates and extra headers](#Respond-with-content-using-a-stateful-callback-containing-templates-and-extra-headers)
+     - [Chunked Response](#chunked-response)
+     - [Chunked Response containing templates](#chunked-response-containing-templates)
+     - [Print to response](#print-to-response)
+@@ -648,6 +649,71 @@ response->addHeader("Server","ESP Async Web Server");
+ request->send(response);
+ ```
+ 
++
++### Respond with content using a stateful callback containing templates and extra headers
++
++The callback interface allows you to work with request-specific instances of this class and provides a hook for resource freing via the deconstructor.
++Instances of this class are freed after the response is closed.
++
++```cpp
++String processor(const String& var)
++{
++  if(var == "HELLO_FROM_TEMPLATE")
++    return F("Hello world!");
++  return String();
++}
++
++class FileWithResponseModificationOptionDataSource : public AwsResponseDataSource
++{
++private:
++    fs::File _content;
++public:
++    FileWithLogBufferResponseDataSource(fs::FS &fs, const String &path)
++    {
++        _content = fs.open(path, "r");
++    }
++
++    /**
++     * Provide next chunk of data to write to the response.
++     * If no more data is available, return 0.
++     * You will be asked for more data till method returns 0.
++     * 
++     * If you need another request, return RESPONSE_TRY_AGAIN but better try to avoid that.
++     * 
++     * @param buf buffer to fill with data, at most maxLen bytes
++     * @param maxLen maximum number of bytes to write at *buf
++     * @param index number of bytes (of this data source instance aka response, excluding header) already written
++     * @return number of bytes written to *buf
++     */
++    virtual size_t fillBuffer(uint8_t *buf, size_t maxLen, size_t index)
++    {
++        // modify returned content here...
++        return _content.read(buf, maxLen);
++    }
++
++    virtual ~FileWithLogBufferResponseDataSource()
++    {
++        if (_content)
++            _content.close();
++    }
++};
++
++// ...
++
++//send 128 bytes as plain text
++AsyncWebServerResponse *response = request->beginStatefulResponse(
++            "text/html", 0, new FileWithResponseModificationOptionDataSource(SPIFFS, "/log.html"), placeholderProcessor);
++    response->addHeader(F("Cache-Control"), F("no-cache, must-revalidate"));
++    response->addHeader(F("Pragma"), F("no-cache"));
++    request->send(response);
++```
++
++
++
++
++
++
++
+ ### Chunked Response
+ Used when content length is unknown. Works best if the client supports HTTP/1.1
+ ```cpp
+diff --git a/src/ESPAsyncWebServer.h b/src/ESPAsyncWebServer.h
+index 7cd21aa8..3e702cdf 100644
+--- a/src/ESPAsyncWebServer.h
++++ b/src/ESPAsyncWebServer.h
+@@ -130,6 +130,36 @@ typedef enum { RCT_NOT_USED = -1, RCT_DEFAULT = 0, RCT_HTTP, RCT_WS, RCT_EVENT,
+ 
+ typedef std::function<size_t(uint8_t*, size_t, size_t)> AwsResponseFiller;
+ typedef std::function<String(const String&)> AwsTemplateProcessor;
++/**
++ * Interface of a stateful data source providing response data for an AsyncWebServerResponse.
++ */
++class AwsResponseDataSource
++{
++public:
++  
++  /**
++   * Provide next chunk of data to write to the response.
++   * If no more data is available, return 0.
++   * You will be asked for more data till method returns 0.
++   * 
++   * If you need another request, return RESPONSE_TRY_AGAIN but better try to avoid that.
++   * 
++   * @param buf buffer to fill with data, at most maxLen bytes
++   * @param maxLen maximum number of bytes to write at *buf
++   * @param index number of bytes (of this data source instance aka response, excluding header) already written
++   * @return number of bytes written to *buf
++   */
++  virtual size_t fillBuffer(uint8_t *buf, size_t maxLen, size_t index)=0;
++
++  /**
++   * Destructor, called when response is closed.
++   * 
++   * Ensure to close any allocated resources here.
++   * Hint: closed response does not imply that all data available has been read.
++   */
++  virtual ~AwsResponseDataSource() {}
++};
++
+ 
+ class AsyncWebServerRequest {
+   using File = fs::File;
+@@ -248,6 +278,7 @@ class AsyncWebServerRequest {
+     AsyncWebServerResponse *beginResponse(File content, const String& path, const String& contentType=String(), bool download=false, AwsTemplateProcessor callback=nullptr);
+     AsyncWebServerResponse *beginResponse(Stream &stream, const String& contentType, size_t len, AwsTemplateProcessor callback=nullptr);
+     AsyncWebServerResponse *beginResponse(const String& contentType, size_t len, AwsResponseFiller callback, AwsTemplateProcessor templateCallback=nullptr);
++    AsyncWebServerResponse *beginStatefulResponse(const String& contentType, size_t len, AwsResponseDataSource* callback, AwsTemplateProcessor templateCallback=nullptr);
+     AsyncWebServerResponse *beginChunkedResponse(const String& contentType, AwsResponseFiller callback, AwsTemplateProcessor templateCallback=nullptr);
+     AsyncResponseStream *beginResponseStream(const String& contentType, size_t bufferSize=1460);
+     AsyncWebServerResponse *beginResponse_P(int code, const String& contentType, const uint8_t * content, size_t len, AwsTemplateProcessor callback=nullptr);
+diff --git a/src/WebRequest.cpp b/src/WebRequest.cpp
+index bbce5ca4..7e5c1203 100644
+--- a/src/WebRequest.cpp
++++ b/src/WebRequest.cpp
+@@ -750,6 +750,10 @@ AsyncWebServerResponse * AsyncWebServerRequest::beginResponse(const String& cont
+   return new AsyncCallbackResponse(contentType, len, callback, templateCallback);
+ }
+ 
++AsyncWebServerResponse * AsyncWebServerRequest::beginStatefulResponse(const String& contentType, size_t len, AwsResponseDataSource* callback, AwsTemplateProcessor templateCallback){
++  return new AsyncStatefulCallbackResponse(contentType, len, callback, templateCallback);
++}
++
+ AsyncWebServerResponse * AsyncWebServerRequest::beginChunkedResponse(const String& contentType, AwsResponseFiller callback, AwsTemplateProcessor templateCallback){
+   if(_version)
+     return new AsyncChunkedResponse(contentType, callback, templateCallback);
+diff --git a/src/WebResponseImpl.h b/src/WebResponseImpl.h
+index 9a64e3a5..2f82c305 100644
+--- a/src/WebResponseImpl.h
++++ b/src/WebResponseImpl.h
+@@ -133,4 +133,16 @@ class AsyncResponseStream: public AsyncAbstractResponse, public Print {
+     using Print::write;
+ };
+ 
++
++class AsyncStatefulCallbackResponse : public AsyncAbstractResponse {
++private:
++  AwsResponseDataSource *_content;
++  size_t _filledLength;
++
++public:
++  AsyncStatefulCallbackResponse(const String &contentType, size_t len, AwsResponseDataSource *dataSource, AwsTemplateProcessor templateCallback = nullptr);
++  ~AsyncStatefulCallbackResponse();
++  bool _sourceValid() const { return true; }
++  virtual size_t _fillBuffer(uint8_t *buf, size_t maxLen) override;
++};
+ #endif /* ASYNCWEBSERVERRESPONSEIMPL_H_ */
+diff --git a/src/WebResponses.cpp b/src/WebResponses.cpp
+index a22e991a..36a9db8f 100644
+--- a/src/WebResponses.cpp
++++ b/src/WebResponses.cpp
+@@ -697,3 +697,31 @@ size_t AsyncResponseStream::write(const uint8_t *data, size_t len){
+ size_t AsyncResponseStream::write(uint8_t data){
+   return write(&data, 1);
+ }
++
++
++
++/*
++ * Stateful callback response
++ */
++
++AsyncStatefulCallbackResponse::AsyncStatefulCallbackResponse(const String &contentType, size_t len, AwsResponseDataSource *dataSource, AwsTemplateProcessor templateCallback): AsyncAbstractResponse(templateCallback) {
++  _code = 200;
++  _content=dataSource;
++  _contentLength = len;
++  if(!len)
++    _sendContentLength = false;
++  _contentType = contentType;
++  _filledLength = 0;
++}
++
++size_t AsyncStatefulCallbackResponse::_fillBuffer(uint8_t *data, size_t len){
++  size_t ret = _content->fillBuffer(data, len, _filledLength);
++  if(ret != RESPONSE_TRY_AGAIN){
++      _filledLength += ret;
++  }
++  return ret;
++}
++;
++AsyncStatefulCallbackResponse::~AsyncStatefulCallbackResponse() {
++  delete _content;
++}

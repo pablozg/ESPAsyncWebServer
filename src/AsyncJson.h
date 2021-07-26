@@ -8,7 +8,7 @@
    server.on("/json", HTTP_ANY, [](AsyncWebServerRequest * request) {
 
     AsyncJsonResponse * response = new AsyncJsonResponse();
-    JsonObject& root = response->getRoot();
+    const JsonObject& root = response->getRoot();
     root["key1"] = "key number one";
     JsonObject& nested = root.createNestedObject("nested");
     nested["key1"] = "key number one";

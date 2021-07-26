@@ -1,0 +1,13 @@
+diff --git a/src/ESPAsyncWebServer.h b/src/ESPAsyncWebServer.h
+index 7cd21aa8..76ad4afa 100644
+--- a/src/ESPAsyncWebServer.h
++++ b/src/ESPAsyncWebServer.h
+@@ -214,6 +214,7 @@ class AsyncWebServerRequest {
+     const String& host() const { return _host; }
+     const String& contentType() const { return _contentType; }
+     size_t contentLength() const { return _contentLength; }
++    const String& itemName() const { return _itemName; }
+     bool multipart() const { return _isMultipart; }
+     const char * methodToString() const;
+     const char * requestedConnTypeToString() const;
+     
